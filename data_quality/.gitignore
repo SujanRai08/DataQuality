@@ -1,0 +1,39 @@
+
+# Python bytecode files
+*.pyc
+*.pyo
+__pycache__/
+
+# Virtual environment folders (if using virtualenv or venv)
+data_env/
+venv/
+ENV/
+.venv/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Environment variable file
+.env
+
+# Log files
+*.log
+
+# Database files
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+
+# VS Code settings (if using VS Code)
+.vscode/
+
+# MacOS files
+.DS_Store
+
+# Windows files
+Thumbs.db
+
+.env
