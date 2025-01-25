@@ -23,10 +23,10 @@ This project analyzes the Online Retail Dataset to uncover patterns and insights
 
 ## Example Outputs
 ### Sales by Weekday Bar Chart
-![Sales by Weekday](image\weekend.png)
+![Sales by Weekday](./image/weekend.png)
 
 ### Top Countries by Revenue Pie Chart
-![Top Countries](image\top5.png)
+![Top Countries](./image/top5.png)
 
 ## How to Run
 1. Clone this repository:
