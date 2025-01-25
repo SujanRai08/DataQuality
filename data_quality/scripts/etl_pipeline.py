@@ -1,88 +1,99 @@
-import pandas as pd
 import os
-import requests
+import time
+import logging
 import pandas as pd
-import psycopg2
-import time 
+import requests
 from dotenv import load_dotenv
+from psycopg2 import connect, sql, OperationalError
 
+# Configure logging
+logging.basicConfig(
+    filename='etl_pipeline.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+# Load environment variables
 load_dotenv()
-API_KEY = os.getenv("WEATHER_API_KEY")
-BASE_URL = "https://api.openweathermap.org/data/2.5/weather"
-CITY = "Kathmandu"
+api_key = os.getenv('WEATHER_API_KEY')
 
-DB_SETTINGS ={
-    "dbname": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-    "host": os.getenv("DB_HOST"),
-    "port": os.getenv("DB_PORT"),
+# API and database configuration
+base_url = "https://api.openweathermap.org/data/2.5/weather"
+params = {"q": "Kathmandu", "appid": api_key, "units": "metric"}
+
+db_config = {
+    "host": os.getenv("POSTGRES_HOST"),
+    "port": os.getenv("POSTGRES_PORT"),
+    "user": os.getenv("POSTGRES_USER"),
+    "password": os.getenv("POSTGRES_PASSWORD"),
+    "database": os.getenv("POSTGRES_DB"),
 }
 
-def fetch_weather_data():
-    params = {"q": CITY, "appid": API_KEY, "units": "metric"}
-    response = requests.get(BASE_URL,params=params)
-    if response.status_code == 200:
-        data = response.json()
-        weather_data = {
-            "date": pd.Timestamp.now(),
-            "temperature":data["main"]["temp"],
-            "humidity": data["main"]["humidity"],
-            "wind_speed": data["wind"]["speed"],
-            "rainfall": data.get("rain", {}).get("1h", 0),
-        }
-        return weather_data
-    else:
-        print(f"Error: {response.status_code}, {response.text}")
-        return None
+data_limit = 10  # Number of records to fetch
+interval = 3600  # Fetch interval in seconds
 
-
-def save_csv(weather_data,file_path ="data/weather_data.csv"):
-    df = pd.DataFrame([weather_data])
-    df.to_csv(file_path,mode="a",index=False,header=not os.path.exists(file_path))
-    print(f"Data saved to {file_path}")
-
-
-def save_to_postgres(weather_data):
+# Function to connect to PostgreSQL
+def connect_to_db():
     try:
-        conn = psycopg2.connect(**DB_SETTINGS)
-        cursor = conn.cursor()
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS weather_data (
-            id SERIAL PRIMARY KEY,
-            date TIMESTAMP,
-            temperature FLOAT,
-            humidity INT,
-            wind_speed FLOAT,
-            rainfall FLOAT
-        )
-        """)
-        cursor.execute("""
-        INSERT INTO weather_data (date, temperature, humidity, wind_speed, rainfall)
-        VALUES (%s, %s, %s, %s, %s)
-        """, (weather_data["date"], weather_data["temperature"],
-              weather_data["humidity"], weather_data["wind_speed"],
-              weather_data["rainfall"]))
-        conn.commit()
-        print("Data saved to PostgreSQL")
-        cursor.close()
-        conn.close()
-    except Exception as e:
-        print("Error saving to PostgreSQL:", e)
+        conn = connect(**db_config)
+        logging.info("Connected to the PostgreSQL database successfully.")
+        return conn
+    except OperationalError as e:
+        logging.error(f"Database connection failed: {e}")
+        raise
 
+# Main ETL function
+def fetch_and_store_weather_data():
+    record_count = 0
+    conn = connect_to_db()
 
-def etl_pipeline(interval=3600,max_iteration=10):
-    iteration = 0
-    while iteration < max_iteration:
-        print(f"fetching data (iteration{iteration +1 }/ {max_iteration})")
-        weather_data = fetch_weather_data()
-        if weather_data:
-            save_csv(weather_data)
-            save_to_postgres(weather_data)
-        iteration += 1
-        if iteration < max_iteration:
-            time.sleep(interval)
+    while record_count < data_limit:
+        try:
+            # Extract
+            response = requests.get(base_url, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                logging.info("Successfully fetched weather data.")
+            else:
+                logging.error(f"API error {response.status_code}: {response.text}")
+                continue
+
+            # Transform
+            weather_data = {
+                "date": pd.Timestamp.now(),
+                "temperature": data["main"]["temp"],
+                "humidity": data["main"]["humidity"],
+                "wind_speed": data["wind"]["speed"],
+                "rainfall": data.get("rain", {}).get("1h", 0),
+            }
+            logging.info(f"Transformed weather data: {weather_data}")
+
+            # Load into CSV
+            df = pd.DataFrame([weather_data])
+            df.to_csv("data/weather_data.csv", mode="a", index=False, header=False)
+            logging.info("Data appended to CSV file.")
+
+            # Load into PostgreSQL
+            with conn.cursor() as cur:
+                insert_query = sql.SQL("""
+                    INSERT INTO weather (date, temperature, humidity, wind_speed, rainfall)
+                    VALUES (%s, %s, %s, %s, %s)
+                """)
+                cur.execute(insert_query, tuple(weather_data.values()))
+                conn.commit()
+                logging.info("Data inserted into PostgreSQL database.")
+
+            record_count += 1
+        except Exception as e:
+            logging.error(f"An error occurred: {e}")
+
+        # Wait for the next interval
+        time.sleep(interval)
+
+    conn.close()
+    logging.info("ETL pipeline completed. Exiting script.")
 
 if __name__ == "__main__":
-    etl_pipeline(interval=3600, max_iterations=10)
-
+    logging.info("Starting ETL pipeline...")
+    fetch_and_store_weather_data()
+    logging.info("ETL pipeline terminated.")
